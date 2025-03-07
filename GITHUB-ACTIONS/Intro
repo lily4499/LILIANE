@@ -1,0 +1,185 @@
+GitHub Actions is a powerful automation tool that allows you to create CI/CD pipelines, automate workflows, and manage deployments within your GitHub repositories.
+🔥 Understanding GitHub Actions
+
+    Workflows: Define a sequence of tasks.
+    Jobs: A workflow consists of multiple jobs that run in parallel or sequentially.
+    Steps: Each job has multiple steps that execute commands or scripts.
+    Actions: Pre-built functions that perform specific tasks.
+
+🔹 Basic GitHub Actions Workflow
+
+Let's start with a simple example where we print "Hello, GitHub Actions!"
+📌 Example 1: Basic Workflow
+
+# .github/workflows/basic.yml
+name: Basic Workflow
+
+on: [push]
+
+jobs:
+  example-job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Print message
+        run: echo "Hello, GitHub Actions!"
+
+🔍 Explanation
+
+    This workflow runs whenever a push event occurs.
+    It runs on an ubuntu-latest machine.
+    Steps include checking out the code and printing a message.
+
+🔹 Intermediate Example: Running Tests in GitHub Actions
+
+Now, let's add testing to the workflow.
+📌 Example 2: Running Tests
+
+# .github/workflows/run-tests.yml
+name: Run Tests
+
+on: [push, pull_request]
+
+jobs:
+  test-job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run tests
+        run: npm test
+
+🔍 Explanation
+
+    Runs on every push and pull_request.
+    Uses setup-node to install Node.js.
+    Installs dependencies (npm install) and runs tests (npm test).
+
+🔹 Advanced Example: Deploying to AWS
+
+Now, let's deploy an application to AWS EC2.
+📌 Example 3: Deploy to AWS EC2
+
+# .github/workflows/deploy.yml
+name: Deploy to AWS EC2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.AWS_SSH_KEY }}" > ~/.ssh/aws_key.pem
+          chmod 600 ~/.ssh/aws_key.pem
+
+      - name: Deploy to EC2
+        run: |
+          ssh -i ~/.ssh/aws_key.pem ubuntu@your-ec2-ip "cd /home/ubuntu/app && git pull && npm install && pm2 restart all"
+
+🔍 Explanation
+
+    Runs only on main branch pushes.
+    Uses an SSH key stored as a secret (AWS_SSH_KEY).
+    Connects to EC2, pulls the latest code, installs dependencies, and restarts the app.
+
+🔥 Pro-Level: Build & Push Docker Image to DockerHub
+
+Let's build and push a Docker image on every push to main.
+📌 Example 4: Docker Build & Push
+
+# .github/workflows/docker-build-push.yml
+name: Build and Push Docker Image
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to DockerHub
+        run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+      - name: Build Docker image
+        run: docker build -t your-dockerhub-username/your-app:latest .
+
+      - name: Push Docker image
+        run: docker push your-dockerhub-username/your-app:latest
+
+🔍 Explanation
+
+    Builds and pushes a Docker image to DockerHub.
+    Uses secrets (DOCKER_USERNAME, DOCKER_PASSWORD) for authentication.
+
+🔥 Super Advanced: Deploy to Kubernetes
+
+Let's deploy the Docker image to a Kubernetes cluster.
+📌 Example 5: Deploy to Kubernetes
+
+# .github/workflows/k8s-deploy.yml
+name: Deploy to Kubernetes
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Set Kubeconfig
+        run: echo "${{ secrets.KUBECONFIG }}" > kubeconfig.yml
+
+      - name: Deploy to Kubernetes
+        run: |
+          kubectl --kubeconfig=kubeconfig.yml apply -f k8s/deployment.yaml
+
+🔍 Explanation
+
+    Uses kubectl to apply deployment.yaml in a Kubernetes cluster.
+    KUBECONFIG is stored as a GitHub secret.
+
+🚀 Summary
+Level	Workflow	Description
+Basic	Print message	Runs a simple workflow with a print statement.
+Intermediate	Run Tests	Installs dependencies and runs tests.
+Advanced	Deploy to EC2	Uses SSH to deploy to an AWS EC2 instance.
+Pro	Docker Build & Push	Builds and pushes a Docker image to DockerHub.
+Super Advanced	Deploy to Kubernetes	Deploys to Kubernetes using kubectl.
