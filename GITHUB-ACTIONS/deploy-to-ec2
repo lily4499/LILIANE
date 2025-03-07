@@ -1,0 +1,143 @@
+Let's build a complete GitHub Actions demo project from scratch, covering everything from creating the application to CI/CD automation. We'll develop a Node.js application, set up a GitHub Actions pipeline, and deploy it to DockerHub and AWS EC2.
+Step 1: Create the Node.js Application
+
+We'll build a simple Express.js app with an API endpoint.
+📌 Initialize the Project
+
+mkdir github-actions-demo && cd github-actions-demo
+npm init -y
+
+📌 Install Dependencies
+
+npm install express
+
+📌 Create index.js
+
+const express = require("express");
+const app = express();
+
+app.get("/", (req, res) => {
+  res.send("Hello, GitHub Actions!");
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
+
+📌 Create Dockerfile
+
+# Use official Node.js image
+FROM node:18-alpine
+
+# Set working directory
+WORKDIR /app
+
+# Copy package.json and install dependencies
+COPY package.json ./
+RUN npm install
+
+# Copy application code
+COPY . .
+
+# Expose port and start app
+EXPOSE 3000
+CMD ["node", "index.js"]
+
+Step 2: Create .github/workflows/ci-cd.yml
+
+This GitHub Actions workflow will:
+
+    Build & Test the Node.js App
+    Build & Push the Docker Image
+    Deploy to AWS EC2
+
+📌 CI/CD Pipeline
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Run Tests
+        run: npm test
+
+  build-and-push-docker:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Log in to DockerHub
+        run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+      - name: Build Docker Image
+        run: docker build -t your-dockerhub-username/github-actions-demo:latest .
+
+      - name: Push Docker Image
+        run: docker push your-dockerhub-username/github-actions-demo:latest
+
+  deploy-to-ec2:
+    runs-on: ubuntu-latest
+    needs: build-and-push-docker
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.AWS_SSH_KEY }}" > ~/.ssh/aws_key.pem
+          chmod 600 ~/.ssh/aws_key.pem
+
+      - name: Deploy to EC2
+        run: |
+          ssh -i ~/.ssh/aws_key.pem ubuntu@your-ec2-ip "docker pull your-dockerhub-username/github-actions-demo:latest && docker stop app || true && docker rm app || true && docker run -d -p 80:3000 --name app your-dockerhub-username/github-actions-demo:latest"
+
+Step 3: Configure GitHub Secrets
+
+    Go to GitHub repository > Settings > Secrets and variables > Actions
+    Add the following secrets:
+        DOCKER_USERNAME: Your DockerHub username.
+        DOCKER_PASSWORD: Your DockerHub password.
+        AWS_SSH_KEY: The private key for SSH access to EC2.
+
+Step 4: Push Code to GitHub
+
+git init
+git branch -M main
+git remote add origin https://github.com/your-username/github-actions-demo.git
+git add .
+git commit -m "Initial commit"
+git push -u origin main
+
+🔥 What Happens Next?
+
+    GitHub Actions automatically triggers when code is pushed to main.
+    It builds and tests the app.
+    It builds & pushes a Docker image to DockerHub.
+    It deploys the app to AWS EC2 using Docker.
+
+🚀 Next Steps
+
+    Deploy the app to Kubernetes using kubectl.
+    Integrate with Terraform for infrastructure as code.
+    Set up Slack notifications for CI/CD pipeline status.
