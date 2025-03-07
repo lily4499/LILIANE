@@ -1,0 +1,182 @@
+🔥 Setting Up Kubernetes Autoscaling (HPA) and Ingress for Your Application
+
+To make your Jenkins Demo App more scalable and accessible via a domain, we will configure:
+
+✅ Horizontal Pod Autoscaler (HPA): Auto-scales pods based on CPU usage.
+✅ Ingress Controller: Routes external traffic using a domain name instead of IP.
+1️⃣ Setting Up Horizontal Pod Autoscaler (HPA)
+📌 What is HPA?
+
+    HPA (Horizontal Pod Autoscaler) dynamically scales pods based on CPU utilization.
+    It ensures high availability and better performance.
+
+🚀 Step 1: Enable Metrics Server
+
+HPA requires a Metrics Server to get CPU and memory usage. If you haven’t installed it, run:
+
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+
+Verify installation:
+
+kubectl get deployment metrics-server -n kube-system
+
+If it says Running, proceed to the next step.
+🚀 Step 2: Add Resource Limits to Backend Deployment
+
+Modify backend deployment (backend-deployment.yaml):
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+      - name: backend
+        image: your-dockerhub-username/jenkins-demo-backend:latest
+        ports:
+        - containerPort: 5000
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "500m"
+            memory: "1Gi"
+
+Apply changes:
+
+kubectl apply -f backend-deployment.yaml
+
+🚀 Step 3: Deploy HPA
+
+Create hpa.yaml:
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50
+
+Apply:
+
+kubectl apply -f hpa.yaml
+
+Check HPA status:
+
+kubectl get hpa
+
+📝 How it Works?
+
+    If CPU usage > 50%, new pods are added (max 5 pods).
+    If CPU usage drops, pods are removed (min 2 pods).
+
+2️⃣ Setting Up Ingress for Domain Routing
+📌 What is Ingress?
+
+    Ingress allows access via a domain instead of an IP.
+    It routes traffic to services using a reverse proxy.
+    Requires an Ingress Controller (e.g., NGINX Ingress).
+
+🚀 Step 1: Install Nginx Ingress Controller
+
+Run:
+
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
+
+Verify:
+
+kubectl get pods -n ingress-nginx
+
+🚀 Step 2: Create an Ingress Resource
+
+Create ingress.yaml:
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jenkins-demo-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: demo.yourdomain.com  # Change this to your domain
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend-service
+            port:
+              number: 80
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: backend-service
+            port:
+              number: 5000
+
+Apply:
+
+kubectl apply -f ingress.yaml
+
+🚀 Step 3: Configure DNS for Custom Domain
+
+    If using a real domain, add an A Record pointing to the Ingress Controller’s IP.
+    Get the IP:
+
+kubectl get svc -n ingress-nginx
+
+Look for:
+
+ingress-nginx-controller  LoadBalancer   EXTERNAL-IP   80:xxxxx
+
+In your domain provider's DNS, add:
+
+    Type: A
+    Name: demo
+    Value: EXTERNAL-IP
+
+✅ Final Steps
+
+    Deploy everything:
+
+kubectl apply -f backend-deployment.yaml
+kubectl apply -f frontend-deployment.yaml
+kubectl apply -f hpa.yaml
+kubectl apply -f ingress.yaml
+
+Check the status:
+
+    kubectl get hpa
+    kubectl get ingress
+
+🎯 Summary
+
+✅ HPA automatically scales backend pods based on CPU usage.
+✅ Ingress allows access via demo.yourdomain.com.
+✅ DNS Configuration ensures the domain resolves correctly.
