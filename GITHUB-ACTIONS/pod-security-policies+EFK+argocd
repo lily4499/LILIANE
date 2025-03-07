@@ -1,0 +1,280 @@
+🔹 Step 1: Implement Kubernetes Pod Security Policies (PSP)
+
+Kubernetes Pod Security Policies (PSP) restrict pod permissions, ensuring security compliance.
+
+    Note: PSP is deprecated in Kubernetes 1.21 and later. Instead, we use Pod Security Admission (PSA) or Open Policy Agent (OPA).
+
+📌 1.1 Create a Pod Security Policy
+
+Modify k8s/psp.yaml:
+
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: restricted-psp
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+    - ALL
+  runAsUser:
+    rule: MustRunAsNonRoot
+  fsGroup:
+    rule: MustRunAs
+    ranges:
+      - min: 1000
+        max: 65535
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'persistentVolumeClaim'
+
+🔹 Explanation:
+
+    Pods must not run as root.
+    Privilege escalation is disabled.
+    Only non-root users are allowed.
+
+📌 1.2 Apply the Pod Security Policy
+
+kubectl apply -f k8s/psp.yaml
+
+📌 1.3 Update GitHub Actions to Apply PSP
+
+Modify .github/workflows/ci-cd.yml:
+
+  apply-psp:
+    runs-on: ubuntu-latest
+    needs: deploy-to-k8s
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Apply Pod Security Policy
+        run: kubectl --kubeconfig=kubeconfig.yml apply -f k8s/psp.yaml
+
+🔹 Step 2: Set Up Log Management with EFK Stack
+
+The EFK (Elasticsearch, Fluentd, Kibana) stack collects, processes, and visualizes logs.
+📌 2.1 Deploy Elasticsearch
+
+Modify k8s/elasticsearch.yaml:
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elasticsearch
+  namespace: logging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: elasticsearch
+  template:
+    metadata:
+      labels:
+        app: elasticsearch
+    spec:
+      containers:
+        - name: elasticsearch
+          image: docker.elastic.co/elasticsearch/elasticsearch:7.10.1
+          env:
+            - name: discovery.type
+              value: "single-node"
+          ports:
+            - containerPort: 9200
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch
+  namespace: logging
+spec:
+  selector:
+    app: elasticsearch
+  ports:
+    - protocol: TCP
+      port: 9200
+      targetPort: 9200
+
+📌 2.2 Deploy Fluentd
+
+Modify k8s/fluentd.yaml:
+
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluentd
+  namespace: logging
+spec:
+  selector:
+    matchLabels:
+      app: fluentd
+  template:
+    metadata:
+      labels:
+        app: fluentd
+    spec:
+      containers:
+        - name: fluentd
+          image: fluent/fluentd-kubernetes-daemonset:v1.12-debian-elasticsearch7
+          env:
+            - name: FLUENT_ELASTICSEARCH_HOST
+              value: "elasticsearch"
+            - name: FLUENT_ELASTICSEARCH_PORT
+              value: "9200"
+
+📌 2.3 Deploy Kibana
+
+Modify k8s/kibana.yaml:
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kibana
+  namespace: logging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kibana
+  template:
+    metadata:
+      labels:
+        app: kibana
+    spec:
+      containers:
+        - name: kibana
+          image: docker.elastic.co/kibana/kibana:7.10.1
+          ports:
+            - containerPort: 5601
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kibana
+  namespace: logging
+spec:
+  selector:
+    app: kibana
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 5601
+  type: LoadBalancer
+
+📌 2.4 Update GitHub Actions to Deploy EFK
+
+Modify .github/workflows/ci-cd.yml:
+
+  deploy-efk:
+    runs-on: ubuntu-latest
+    needs: deploy-to-k8s
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Deploy EFK Stack
+        run: |
+          kubectl --kubeconfig=kubeconfig.yml apply -f k8s/elasticsearch.yaml
+          kubectl --kubeconfig=kubeconfig.yml apply -f k8s/fluentd.yaml
+          kubectl --kubeconfig=kubeconfig.yml apply -f k8s/kibana.yaml
+
+🔹 Step 3: Add GitOps Workflow using ArgoCD
+
+ArgoCD automates Kubernetes deployments using declarative GitOps.
+📌 3.1 Install ArgoCD
+
+kubectl create namespace argocd
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+
+📌 3.2 Expose ArgoCD API
+
+Modify k8s/argocd.yaml:
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: argocd-server
+  namespace: argocd
+spec:
+  selector:
+    app.kubernetes.io/name: argocd-server
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+    - name: https
+      port: 443
+      targetPort: 8080
+  type: LoadBalancer
+
+📌 3.3 Configure ArgoCD for GitOps
+
+Modify k8s/app-of-apps.yaml:
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: github-actions-demo
+  namespace: argocd
+spec:
+  destination:
+    namespace: default
+    server: https://kubernetes.default.svc
+  source:
+    repoURL: "https://github.com/your-username/github-actions-demo.git"
+    targetRevision: HEAD
+    path: "k8s"
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+
+🔹 Explanation:
+
+    Watches the GitHub repo and deploys changes automatically.
+    Uses self-healing to maintain desired state.
+
+📌 3.4 Update GitHub Actions to Deploy ArgoCD
+
+Modify .github/workflows/ci-cd.yml:
+
+  deploy-argocd:
+    runs-on: ubuntu-latest
+    needs: deploy-to-k8s
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Deploy ArgoCD
+        run: |
+          kubectl --kubeconfig=kubeconfig.yml apply -f k8s/argocd.yaml
+          kubectl --kubeconfig=kubeconfig.yml apply -f k8s/app-of-apps.yaml
+
+🚀 Final GitHub Actions Workflow
+Job	Purpose
+build-and-test	Runs tests for the app
+build-and-push-docker	Builds and pushes Docker image
+provision-infra	Creates Kubernetes cluster using Terraform
+setup-iam	Configures IAM role for Kubernetes
+apply-psp	Implements Kubernetes Pod Security Policies
+deploy-efk	Deploys EFK stack for logging
+deploy-argocd	Implements GitOps using ArgoCD
+notify-slack	Sends status notifications to Slack
+🔥 Next Steps
+
+    Set up Service Mesh with Linkerd.
+    Implement Kubernetes Resource Quotas.
+    Configure Multi-Cluster Kubernetes Federation.
