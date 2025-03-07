@@ -1,0 +1,369 @@
+🔥 Automate Database Backups & Monitor Your Application with Prometheus & Grafana
+
+To ensure your Jenkins Demo App is production-ready, we will:
+
+✅ Automate MongoDB backups with cron jobs
+✅ Monitor application performance using Prometheus & Grafana
+1️⃣ Automate MongoDB Backups
+📌 Why?
+
+    Regular backups prevent data loss.
+    Automate backups using a Kubernetes CronJob.
+    Store backups in AWS S3 or a persistent volume.
+
+🚀 Step 1: Create a Persistent Volume for Backups
+
+This stores the MongoDB backups inside Kubernetes.
+mongo-backup-pv.yaml
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongo-backup-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+
+Apply:
+
+kubectl apply -f mongo-backup-pv.yaml
+
+🚀 Step 2: Create a Kubernetes CronJob for Backups
+
+The CronJob will:
+
+    Run every 6 hours.
+    Dump MongoDB data into a volume.
+    Delete old backups after 7 days.
+
+mongo-backup-cronjob.yaml
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mongo-backup
+spec:
+  schedule: "0 */6 * * *"  # Runs every 6 hours
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: mongo-backup
+            image: bitnami/mongodb:latest
+            command:
+              - /bin/sh
+              - "-c"
+              - |
+                mongodump --host mongo-service --out /backup/mongo-$(date +\%F-\%H-%M)
+                find /backup -type d -mtime +7 -exec rm -rf {} \;
+            volumeMounts:
+            - name: backup-volume
+              mountPath: /backup
+          restartPolicy: OnFailure
+          volumes:
+          - name: backup-volume
+            persistentVolumeClaim:
+              claimName: mongo-backup-pvc
+
+Apply:
+
+kubectl apply -f mongo-backup-cronjob.yaml
+
+🚀 Step 3: Verify Backups
+
+kubectl get cronjobs
+kubectl get pods --selector=job-name=mongo-backup
+kubectl exec -it <backup-pod-name> -- ls /backup
+
+📌 (Optional) Upload MongoDB Backups to AWS S3
+
+If you want to store backups in AWS S3, modify the script in mongo-backup-cronjob.yaml:
+
+command:
+  - /bin/sh
+  - "-c"
+  - |
+    mongodump --host mongo-service --out /backup/mongo-$(date +\%F-\%H-%M)
+    aws s3 cp /backup s3://your-bucket-name/mongodb-backups --recursive
+
+Then, provide AWS credentials via a Kubernetes Secret.
+2️⃣ Monitor Application with Prometheus & Grafana
+📌 Why?
+
+    Prometheus collects application metrics.
+    Grafana visualizes the metrics with dashboards.
+
+🚀 Step 1: Install Prometheus & Grafana
+
+kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/main/bundle.yaml
+
+Verify:
+
+kubectl get pods -n monitoring
+
+🚀 Step 2: Configure Prometheus for Monitoring
+
+Create a ServiceMonitor for the backend.
+prometheus-service-monitor.yaml
+
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: backend-monitor
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: backend
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 10s
+
+Apply:
+
+kubectl apply -f prometheus-service-monitor.yaml
+
+🚀 Step 3: Deploy Grafana
+
+Create a deployment.
+grafana.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana
+        ports:
+        - containerPort: 3000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-service
+spec:
+  selector:
+    app: grafana
+  ports:
+  - port: 80
+    targetPort: 3000
+  type: LoadBalancer
+
+Apply:
+
+kubectl apply -f grafana.yaml
+
+Get the Grafana URL:
+
+kubectl get svc grafana-service
+
+Login at http://<EXTERNAL-IP> (default admin/admin).
+🚀 Step 4: Add a Grafana Dashboard
+
+    Go to Grafana → Data Sources → Add Prometheus.
+    Set URL to:
+
+    http://prometheus-service.monitoring.svc.cluster.local:9090
+
+    Import a Kubernetes dashboard (ID: 6417).
+
+✅ Summary
+
+✅ MongoDB backups run every 6 hours.
+✅ Backups stored in Persistent Volume (or AWS S3).
+✅ Prometheus collects metrics from the backend.
+✅ Grafana visualizes logs & performance metrics.
+
+🚀 Next Steps: Would you like to:
+
+    Alert via Slack when CPU usage is too high?
+    Store logs in Elasticsearch for detailed analysis?
+
+
+    -------------------------------------
+
+📌 Should You Create /metrics Path?
+
+Yes, if you want Prometheus monitoring, you need a /metrics endpoint in your backend application.
+
+Prometheus collects metrics (CPU, Memory, Requests, etc.) via this endpoint.
+🚀 Step 1: Add /metrics Path to server.js
+
+Modify server.js to expose /metrics using the prom-client package.
+1️⃣ Install Prometheus Client in Backend
+
+Run:
+
+npm install prom-client
+
+2️⃣ Modify server.js
+
+Update your backend app to expose the /metrics route:
+
+const express = require("express");
+const mongoose = require("mongoose");
+const cors = require("cors");
+const client = require("prom-client"); // ✅ Import Prometheus Client
+require("dotenv").config();
+
+const app = express();
+app.use(express.json());
+app.use(cors());
+
+// Prometheus Metrics Setup
+const collectDefaultMetrics = client.collectDefaultMetrics;
+collectDefaultMetrics({ timeout: 5000 });
+
+// Create a custom metric (Example: HTTP Request Counter)
+const httpRequestCounter = new client.Counter({
+    name: "http_requests_total",
+    help: "Total number of HTTP requests",
+    labelNames: ["method", "route", "status"]
+});
+
+// Middleware to track request count
+app.use((req, res, next) => {
+    res.on("finish", () => {
+        httpRequestCounter.inc({ method: req.method, route: req.path, status: res.statusCode });
+    });
+    next();
+});
+
+// Root Route
+app.get("/", (req, res) => {
+    res.send("Jenkins Demo API Running!");
+});
+
+// ✅ Add `/api` Route
+app.get("/api", (req, res) => {
+    res.json({ message: "API is working!" });
+});
+
+// ✅ Add `/metrics` Route for Prometheus
+app.get("/metrics", async (req, res) => {
+    res.set("Content-Type", client.register.contentType);
+    res.end(await client.register.metrics());
+});
+
+// MongoDB Connection
+mongoose.connect(process.env.DB_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+}).then(() => console.log("MongoDB Connected"))
+.catch(err => console.log(err));
+
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+🚀 Step 2: Update Kubernetes Ingress to Expose /metrics
+
+Modify your Ingress (ingress.yaml):
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jenkins-demo-ingress
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  tls:
+  - hosts:
+    - demo.yourdomain.com
+    secretName: demo-tls
+  rules:
+  - host: demo.yourdomain.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend-service
+            port:
+              number: 80
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: backend-service
+            port:
+              number: 5000
+      - path: /metrics  # ✅ Add Metrics Path
+        pathType: Prefix
+        backend:
+          service:
+            name: backend-service
+            port:
+              number: 5000
+
+Apply changes:
+
+kubectl apply -f ingress.yaml
+
+🚀 Step 3: Deploy & Verify
+1️⃣ Rebuild & Push the Backend Image
+
+docker build -t your-dockerhub-username/jenkins-demo-backend .
+docker push your-dockerhub-username/jenkins-demo-backend
+
+2️⃣ Restart Backend Deployment
+
+kubectl rollout restart deployment/backend
+
+3️⃣ Verify the /metrics Endpoint
+
+Run:
+
+curl -k https://demo.yourdomain.com/metrics
+
+Expected Prometheus Metrics Output:
+
+# HELP http_requests_total Total number of HTTP requests
+# TYPE http_requests_total counter
+http_requests_total{method="GET",route="/api",status="200"} 5
+http_requests_total{method="GET",route="/metrics",status="200"} 1
+...
+
+🚀 Step 4: Configure Prometheus to Scrape /metrics
+
+Modify prometheus.yaml:
+
+scrape_configs:
+  - job_name: 'jenkins-demo-backend'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['backend-service:5000']
+
+Apply:
+
+kubectl apply -f prometheus.yaml
+
+✅ Summary
+
+✅ Added /metrics path to backend (server.js)
+✅ Updated ingress.yaml to expose /metrics
+✅ Restarted backend & verified /metrics works
+✅ Configured Prometheus to collect backend metrics
+
+🚀 Now, your backend metrics are available at:
+🔗 https://demo.yourdomain.com/metrics
+📊 Ready for Prometheus & Grafana monitoring!
+    
