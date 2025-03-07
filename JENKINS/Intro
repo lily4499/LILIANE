@@ -1,0 +1,237 @@
+Jenkins: From Basic to Advanced
+
+Jenkins is an open-source automation server used for continuous integration (CI) and continuous delivery (CD). It automates the building, testing, and deployment of applications, making software development more efficient and reliable.
+1. Basic: Getting Started with Jenkins
+1.1 Installing Jenkins
+
+Jenkins can be installed on various platforms, including Windows, Linux, and macOS. Below is an example installation for Ubuntu:
+
+# Update package list
+sudo apt update
+
+# Install Java (Jenkins requires Java)
+sudo apt install openjdk-11-jdk -y
+
+# Add the Jenkins repository and install Jenkins
+wget -q -O - https://pkg.jenkins.io/debian/jenkins.io.key | sudo apt-key add -
+sudo sh -c 'echo deb http://pkg.jenkins.io/debian-stable binary/ > /etc/apt/sources.list.d/jenkins.list'
+sudo apt update
+sudo apt install jenkins -y
+
+# Start and enable Jenkins
+sudo systemctl start jenkins
+sudo systemctl enable jenkins
+
+Once installed, access Jenkins at:
+
+http://localhost:8080
+
+Retrieve the initial admin password:
+
+sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+
+Follow the on-screen instructions to complete the setup.
+1.2 Basic Jenkins Job: Hello World
+
+Create a simple Jenkins job that prints Hello, World!
+
+    Open Jenkins UI → Click on New Item.
+    Enter the job name and select Freestyle project.
+    Under Build Steps, click Add build step → Execute shell.
+    Enter:
+
+    echo "Hello, World!"
+
+    Click Save and then Build Now.
+    Click on Console Output to see the output.
+
+2. Intermediate: Jenkins Pipelines
+
+Jenkins Pipelines allow you to define the entire build and deployment process using a script.
+2.1 Creating a Simple Pipeline
+
+    Click on New Item → Select Pipeline.
+    Scroll to the Pipeline section and enter the following script:
+
+pipeline {
+    agent any
+    stages {
+        stage('Build') {
+            steps {
+                echo 'Building the application...'
+            }
+        }
+        stage('Test') {
+            steps {
+                echo 'Running tests...'
+            }
+        }
+        stage('Deploy') {
+            steps {
+                echo 'Deploying the application...'
+            }
+        }
+    }
+}
+
+    Click Save and then Build Now.
+
+Output
+
+Jenkins will execute the pipeline with three stages: Build, Test, Deploy.
+2.2 Jenkins with GitHub
+
+Automate the process of pulling code from GitHub and building it.
+
+    Install Git Plugin in Jenkins.
+    Create a Freestyle Job.
+    Under Source Code Management, select Git and provide the repository URL:
+
+https://github.com/your-username/your-repo.git
+
+Add a Build Step → Execute Shell and write:
+
+    git pull
+    echo "Code Pulled from GitHub"
+
+    Click Save and Build Now.
+
+3. Advanced: CI/CD with Jenkins
+
+Now, let's automate building, testing, and deploying a Dockerized application using Jenkins.
+3.1 Jenkinsfile for CI/CD
+
+This pipeline builds a Docker image, pushes it to DockerHub, and deploys it using Kubernetes.
+
+pipeline {
+    agent any
+    environment {
+        DOCKER_IMAGE = "your-dockerhub-username/demo-app:${BUILD_NUMBER}"
+        K8S_DEPLOYMENT = "deployment.yaml"
+    }
+    stages {
+        stage('Checkout') {
+            steps {
+                git 'https://github.com/your-username/demo-app.git'
+            }
+        }
+        stage('Build Docker Image') {
+            steps {
+                sh 'docker build -t $DOCKER_IMAGE .'
+            }
+        }
+        stage('Push to DockerHub') {
+            steps {
+                withDockerRegistry([credentialsId: 'dockerhub-credentials', url: '']) {
+                    sh 'docker push $DOCKER_IMAGE'
+                }
+            }
+        }
+        stage('Deploy to Kubernetes') {
+            steps {
+                sh 'kubectl apply -f $K8S_DEPLOYMENT'
+            }
+        }
+    }
+}
+
+Steps Explanation
+
+    Checkout Code: Pulls code from GitHub.
+    Build Docker Image: Uses docker build to create an image.
+    Push to DockerHub: Uploads the image to DockerHub.
+    Deploy to Kubernetes: Deploys the app using a Kubernetes manifest.
+
+3.2 Integrating Jenkins with AWS (Deploy to EKS)
+
+To deploy a Docker image to AWS EKS (Elastic Kubernetes Service):
+
+    Install AWS CLI & kubectl on Jenkins.
+    Use IAM roles for authentication.
+    Modify the Jenkinsfile:
+
+pipeline {
+    agent any
+    environment {
+        ECR_REGISTRY = "123456789012.dkr.ecr.us-east-1.amazonaws.com"
+        ECR_REPO = "my-app"
+        IMAGE_TAG = "${BUILD_NUMBER}"
+    }
+    stages {
+        stage('Build Docker Image') {
+            steps {
+                sh "docker build -t $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG ."
+            }
+        }
+        stage('Push to AWS ECR') {
+            steps {
+                sh "aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $ECR_REGISTRY"
+                sh "docker push $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG"
+            }
+        }
+        stage('Deploy to EKS') {
+            steps {
+                sh "kubectl apply -f deployment.yaml"
+            }
+        }
+    }
+}
+
+3.3 Jenkins with Terraform (Infrastructure as Code)
+
+To automate AWS infrastructure provisioning, integrate Jenkins with Terraform.
+Jenkinsfile
+
+pipeline {
+    agent any
+    environment {
+        AWS_REGION = "us-east-1"
+    }
+    stages {
+        stage('Terraform Init') {
+            steps {
+                sh 'terraform init'
+            }
+        }
+        stage('Terraform Plan') {
+            steps {
+                sh 'terraform plan'
+            }
+        }
+        stage('Terraform Apply') {
+            steps {
+                sh 'terraform apply -auto-approve'
+            }
+        }
+    }
+}
+
+4. Master Level: Jenkins with Monitoring & Security
+4.1 Jenkins with Prometheus & Grafana
+
+To monitor Jenkins performance:
+
+    Install the Prometheus Plugin in Jenkins.
+    Configure Jenkins to expose metrics:
+
+    http://localhost:8080/prometheus
+
+    Configure Grafana to visualize Jenkins data.
+
+4.2 Security Best Practices
+
+    Restrict access using RBAC (Role-Based Access Control).
+    Use API Tokens instead of passwords.
+    Store secrets in Jenkins Credentials.
+    Enable HTTPS using an SSL certificate.
+
+Conclusion
+
+Jenkins is a powerful tool for automating the software development lifecycle. This guide covered:
+
+    Basic: Installation and a simple "Hello, World!" job.
+    Intermediate: Pipelines and GitHub integration.
+    Advanced: CI/CD with Docker, Kubernetes, AWS EKS, and Terraform.
+    Master Level: Monitoring with Prometheus and Security best practices.
+
+
