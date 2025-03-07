@@ -1,0 +1,209 @@
+📊 Set Up Grafana Dashboards for Kubernetes & Application Metrics
+
+To visualize metrics collected from your Jenkins Demo App & Kubernetes cluster, we will:
+✅ Install Prometheus (Stores metrics)
+✅ Install Grafana (Visualizes data)
+✅ Create Dashboards for Kubernetes & App Metrics
+✅ Expose Grafana for Web Access
+1️⃣ Deploy Prometheus & Grafana in Kubernetes
+📌 What is Prometheus & Grafana?
+
+    Prometheus collects & stores metrics from the application and Kubernetes.
+    Grafana provides a dashboard UI to visualize Prometheus data.
+
+🚀 Step 1: Deploy Prometheus
+
+Create a prometheus-deployment.yaml file:
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  labels:
+    name: prometheus-config
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+
+    scrape_configs:
+      - job_name: 'kubernetes'
+        kubernetes_sd_configs:
+          - role: node
+
+      - job_name: 'backend'
+        static_configs:
+          - targets: ['backend-service:5000']
+            labels:
+              service: "backend"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+      - name: prometheus
+        image: prom/prometheus
+        args:
+          - "--config.file=/etc/prometheus/prometheus.yml"
+        ports:
+        - containerPort: 9090
+        volumeMounts:
+        - name: config-volume
+          mountPath: /etc/prometheus/
+      volumes:
+      - name: config-volume
+        configMap:
+          name: prometheus-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-service
+spec:
+  selector:
+    app: prometheus
+  ports:
+  - protocol: TCP
+    port: 9090
+    targetPort: 9090
+  type: ClusterIP
+
+Apply the configuration:
+
+kubectl apply -f prometheus-deployment.yaml
+
+Verify:
+
+kubectl get pods
+
+🚀 Step 2: Deploy Grafana
+
+Create a grafana-deployment.yaml file:
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana
+        ports:
+        - containerPort: 3000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-service
+spec:
+  selector:
+    app: grafana
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 3000
+  type: LoadBalancer
+
+Apply the configuration:
+
+kubectl apply -f grafana-deployment.yaml
+
+Verify:
+
+kubectl get services
+
+Once deployed, get the Grafana URL:
+
+kubectl get svc grafana-service
+
+Look for the EXTERNAL-IP, then access Grafana at:
+
+http://EXTERNAL-IP
+
+2️⃣ Configure Grafana to Use Prometheus
+🚀 Step 3: Access Grafana
+
+    Open Grafana Web UI at:
+
+    http://EXTERNAL-IP
+
+    Login Credentials:
+        Username: admin
+        Password: admin
+        Change password on first login.
+
+🚀 Step 4: Add Prometheus as a Data Source
+
+    Go to Configuration > Data Sources
+    Click "Add Data Source"
+    Select Prometheus
+    Set URL: http://prometheus-service:9090
+    Click Save & Test.
+
+3️⃣ Create Grafana Dashboards
+🚀 Step 5: Import Dashboards
+1️⃣ Kubernetes Cluster Dashboard
+
+    Go to Dashboards > Import
+    Enter ID: 315
+    Click Load and select Prometheus as the data source.
+    Click Import.
+
+2️⃣ Node.js (Backend) Metrics Dashboard
+
+    Go to Dashboards > Import
+    Enter ID: 11074
+    Click Load and select Prometheus as the data source.
+    Click Import.
+
+4️⃣ Expose Grafana via Ingress
+
+Modify ingress.yaml to expose Grafana:
+
+- path: /grafana
+  pathType: Prefix
+  backend:
+    service:
+      name: grafana-service
+      port:
+        number: 80
+
+Apply:
+
+kubectl apply -f ingress.yaml
+
+Now, access Grafana at:
+
+https://demo.yourdomain.com/grafana
+
+✅ Final Steps
+
+✅ Prometheus collects metrics from the backend & Kubernetes
+✅ Grafana visualizes data with dashboards
+✅ Ingress allows web access at https://demo.yourdomain.com/grafana
+
+🎯 Now, you have a full monitoring setup! 🚀
+
+Would you like to add alerts (Slack, Email) for failures? 
