@@ -1,0 +1,255 @@
+🔹 Step 1: Set Up Kubernetes Network Policies for Security
+
+Kubernetes Network Policies restrict communication between pods to enhance security.
+📌 1.1 Create k8s/network-policy.yaml
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-app-to-db
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      app: database
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: github-actions-demo
+      ports:
+        - protocol: TCP
+          port: 27017
+
+🔹 Explanation:
+
+    Only pods with label app: github-actions-demo can communicate with the database pod on port 27017 (MongoDB).
+    All other traffic is blocked.
+
+📌 1.2 Update GitHub Actions to Deploy Network Policies
+
+Modify .github/workflows/ci-cd.yml:
+
+  apply-network-policies:
+    runs-on: ubuntu-latest
+    needs: deploy-to-k8s
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Apply Network Policies
+        run: kubectl --kubeconfig=kubeconfig.yml apply -f k8s/network-policy.yaml
+
+🔹 Step 2: Add Secrets Management with HashiCorp Vault
+
+We will:
+
+    Deploy Vault to Kubernetes.
+    Use Vault to store and retrieve secrets.
+
+📌 2.1 Deploy HashiCorp Vault in Kubernetes
+
+Create k8s/vault.yaml:
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vault
+  namespace: security
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vault
+  template:
+    metadata:
+      labels:
+        app: vault
+    spec:
+      containers:
+        - name: vault
+          image: hashicorp/vault
+          ports:
+            - containerPort: 8200
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault
+  namespace: security
+spec:
+  selector:
+    app: vault
+  ports:
+    - protocol: TCP
+      port: 8200
+      targetPort: 8200
+
+📌 2.2 Store Secrets in Vault
+
+Run the following inside the Vault pod:
+
+vault kv put secret/database username="admin" password="securepassword"
+
+📌 2.3 Retrieve Secrets in Kubernetes Deployment
+
+Modify k8s/deployment.yaml:
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: github-actions-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: github-actions-demo
+  template:
+    metadata:
+      labels:
+        app: github-actions-demo
+    spec:
+      containers:
+        - name: app
+          image: your-dockerhub-username/github-actions-demo:latest
+          env:
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: vault-database
+                  key: username
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: vault-database
+                  key: password
+
+📌 2.4 Update GitHub Actions to Deploy Vault
+
+Modify .github/workflows/ci-cd.yml:
+
+  deploy-vault:
+    runs-on: ubuntu-latest
+    needs: deploy-to-k8s
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Deploy Vault
+        run: kubectl --kubeconfig=kubeconfig.yml apply -f k8s/vault.yaml
+
+🔹 Step 3: Implement Canary Deployments with Istio
+
+Canary deployments allow gradual rollout of a new version.
+📌 3.1 Create Istio Canary Deployment
+
+Modify k8s/canary.yaml:
+
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: github-actions-demo-canary
+spec:
+  hosts:
+    - "*"
+  gateways:
+    - github-actions-demo-gateway
+  http:
+    - route:
+        - destination:
+            host: github-actions-demo
+            subset: stable
+          weight: 80
+        - destination:
+            host: github-actions-demo
+            subset: canary
+          weight: 20
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: github-actions-demo-destination
+spec:
+  host: github-actions-demo
+  subsets:
+    - name: stable
+      labels:
+        version: v1
+    - name: canary
+      labels:
+        version: v2
+
+🔹 Explanation:
+
+    80% of traffic goes to the stable version.
+    20% of traffic goes to the canary version.
+
+📌 3.2 Update Kubernetes Deployment
+
+Modify k8s/deployment.yaml:
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: github-actions-demo-canary
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: github-actions-demo
+      version: v2
+  template:
+    metadata:
+      labels:
+        app: github-actions-demo
+        version: v2
+    spec:
+      containers:
+        - name: app
+          image: your-dockerhub-username/github-actions-demo:v2
+          ports:
+            - containerPort: 3000
+
+📌 3.3 Update GitHub Actions to Deploy Canary Release
+
+Modify .github/workflows/ci-cd.yml:
+
+  deploy-canary:
+    runs-on: ubuntu-latest
+    needs: deploy-to-k8s
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Deploy Canary Release
+        run: |
+          kubectl --kubeconfig=kubeconfig.yml apply -f k8s/canary.yaml
+          kubectl --kubeconfig=kubeconfig.yml apply -f k8s/deployment.yaml
+
+🚀 Final GitHub Actions Workflow
+Job	Purpose
+build-and-test	Runs tests for the app
+build-and-push-docker	Builds and pushes Docker image
+provision-infra	Creates Kubernetes cluster using Terraform
+setup-iam	Configures IAM role for Kubernetes
+deploy-to-k8s	Deploys the app to Kubernetes
+apply-network-policies	Secures network with Kubernetes Network Policies
+deploy-vault	Deploys HashiCorp Vault for secrets management
+deploy-canary	Implements Canary Deployment using Istio
+notify-slack	Sends status notifications to Slack
+🔥 Next Steps
+
+    Implement Kubernetes Pod Security Policies for advanced security.
+    Set up Log Management with EFK Stack (Elasticsearch, Fluentd, Kibana).
+    Add GitOps Workflow using ArgoCD.
