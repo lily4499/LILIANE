@@ -1,0 +1,196 @@
+🔹 Step 1: Implement Machine Learning Workloads on Kubernetes
+
+We will deploy a TensorFlow model in Kubernetes using Kubeflow.
+📌 1.1 Install Kubeflow
+
+kubectl apply -f https://raw.githubusercontent.com/kubeflow/manifests/v1.7-branch/kfctl_k8s_istio.yaml
+
+🔹 Explanation:
+
+    Kubeflow is a machine learning (ML) toolkit for Kubernetes.
+    It provides Jupyter Notebooks, Pipelines, and Model Serving.
+
+📌 1.2 Deploy a TensorFlow Model
+
+Modify k8s/ml-deployment.yaml:
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tf-model
+  namespace: kubeflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tf-model
+  template:
+    metadata:
+      labels:
+        app: tf-model
+    spec:
+      containers:
+        - name: tf-model
+          image: tensorflow/serving:latest
+          args:
+            - "--model_name=mnist"
+            - "--model_base_path=/models/mnist"
+          ports:
+            - containerPort: 8501
+          volumeMounts:
+            - mountPath: /models/mnist
+              name: model-storage
+      volumes:
+        - name: model-storage
+          persistentVolumeClaim:
+            claimName: ml-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tf-model-service
+  namespace: kubeflow
+spec:
+  selector:
+    app: tf-model
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8501
+  type: LoadBalancer
+
+🔹 Explanation:
+
+    Deploys a TensorFlow model using TensorFlow Serving.
+    Stores models in Persistent Volume Claim (PVC).
+
+📌 1.3 Update GitHub Actions for ML Deployment
+
+Modify .github/workflows/ci-cd.yml:
+
+  deploy-ml-model:
+    runs-on: ubuntu-latest
+    needs: deploy-to-k8s
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Deploy ML Model
+        run: kubectl --kubeconfig=kubeconfig.yml apply -f k8s/ml-deployment.yaml
+
+🔹 Step 2: Configure Serverless Deployments with Knative
+
+Knative enables serverless functions and scale-to-zero deployments.
+📌 2.1 Install Knative
+
+kubectl apply -f https://github.com/knative/operator/releases/latest/download/operator.yaml
+
+📌 2.2 Deploy a Serverless Function
+
+Modify k8s/knative-service.yaml:
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: knative-hello
+  namespace: default
+spec:
+  template:
+    spec:
+      containers:
+        - image: gcr.io/knative-samples/helloworld-go
+          env:
+            - name: TARGET
+              value: "Knative"
+
+🔹 Explanation:
+
+    Deploys a serverless function with Knative Serving.
+    Automatically scales up when invoked and scales down to zero when idle.
+
+📌 2.3 Update GitHub Actions for Knative Deployment
+
+Modify .github/workflows/ci-cd.yml:
+
+  deploy-knative-service:
+    runs-on: ubuntu-latest
+    needs: deploy-to-k8s
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Deploy Knative Service
+        run: kubectl --kubeconfig=kubeconfig.yml apply -f k8s/knative-service.yaml
+
+🔹 Step 3: Optimize Kubernetes Performance with Cilium for Networking
+
+Cilium provides high-performance networking and security policies.
+📌 3.1 Install Cilium
+
+kubectl apply -f https://raw.githubusercontent.com/cilium/cilium/v1.13.0/install/kubernetes/quick-install.yaml
+
+📌 3.2 Define Cilium Network Policy
+
+Modify k8s/cilium-policy.yaml:
+
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: restrict-external-traffic
+spec:
+  endpointSelector:
+    matchLabels:
+      app: github-actions-demo
+  egress:
+    - toEntities:
+        - cluster
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+🔹 Explanation:
+
+    Blocks external traffic except for port 443 (HTTPS).
+
+📌 3.3 Update GitHub Actions for Cilium Deployment
+
+Modify .github/workflows/ci-cd.yml:
+
+  deploy-cilium:
+    runs-on: ubuntu-latest
+    needs: deploy-to-k8s
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Deploy Cilium
+        run: kubectl --kubeconfig=kubeconfig.yml apply -f https://raw.githubusercontent.com/cilium/cilium/v1.13.0/install/kubernetes/quick-install.yaml
+
+      - name: Apply Cilium Network Policy
+        run: kubectl --kubeconfig=kubeconfig.yml apply -f k8s/cilium-policy.yaml
+
+🚀 Final GitHub Actions Workflow
+Job	Purpose
+build-and-test	Runs tests for the app
+build-and-push-docker	Builds and pushes Docker image
+provision-infra	Creates Kubernetes cluster using Terraform
+setup-iam	Configures IAM role for Kubernetes
+deploy-ml-model	Deploys TensorFlow ML model using Kubeflow
+deploy-knative-service	Deploys a serverless function using Knative
+deploy-cilium	Configures Cilium for networking optimization
+notify-slack	Sends status notifications to Slack
+🔥 Next Steps
+
+    Implement AI Model Training Pipelines with Kubeflow Pipelines.
+    Set up Federated Learning for Multi-Cluster AI.
+    Optimize Cost-Aware AI Deployments in Kubernetes.
