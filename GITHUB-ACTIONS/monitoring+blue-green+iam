@@ -1,0 +1,264 @@
+Let's extend our GitHub Actions pipeline with:
+
+    🔹 Adding Monitoring using Prometheus & Grafana
+    🔹 Implementing Blue-Green Deployments in Kubernetes
+    🔹 Securing Deployment using IAM Roles in AWS
+
+🔹 Step 1: Add Monitoring with Prometheus & Grafana
+📌 1.1 Deploy Prometheus
+
+Create k8s/prometheus.yaml:
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+    scrape_configs:
+      - job_name: 'node-app'
+        static_configs:
+          - targets: ['github-actions-demo-service.default.svc.cluster.local:3000']
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus
+          args:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/prometheus
+      volumes:
+        - name: config-volume
+          configMap:
+            name: prometheus-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - protocol: TCP
+      port: 9090
+      targetPort: 9090
+
+📌 1.2 Deploy Grafana
+
+Create k8s/grafana.yaml:
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana
+          ports:
+            - containerPort: 3000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  selector:
+    app: grafana
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 3000
+  type: LoadBalancer
+
+📌 1.3 Update GitHub Actions Workflow to Deploy Monitoring
+
+Modify .github/workflows/ci-cd.yml:
+
+  deploy-monitoring:
+    runs-on: ubuntu-latest
+    needs: deploy-to-k8s
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Deploy Prometheus & Grafana
+        run: |
+          kubectl --kubeconfig=kubeconfig.yml apply -f k8s/prometheus.yaml
+          kubectl --kubeconfig=kubeconfig.yml apply -f k8s/grafana.yaml
+
+🔹 Step 2: Implement Blue-Green Deployment in Kubernetes
+
+Instead of replacing the existing pod, we will deploy a new version alongside the old one and switch traffic once verified.
+📌 2.1 Create k8s/blue-green.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: github-actions-demo-green
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: github-actions-demo
+      version: green
+  template:
+    metadata:
+      labels:
+        app: github-actions-demo
+        version: green
+    spec:
+      containers:
+        - name: app
+          image: your-dockerhub-username/github-actions-demo:latest
+          ports:
+            - containerPort: 3000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: github-actions-demo-service
+spec:
+  selector:
+    app: github-actions-demo
+    version: green
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 3000
+  type: LoadBalancer
+
+📌 2.2 Update GitHub Actions for Blue-Green Deployment
+
+Modify .github/workflows/ci-cd.yml:
+
+  deploy-blue-green:
+    runs-on: ubuntu-latest
+    needs: build-and-push-docker
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Deploy Green Version
+        run: kubectl --kubeconfig=kubeconfig.yml apply -f k8s/blue-green.yaml
+
+      - name: Wait for Green Deployment
+        run: kubectl --kubeconfig=kubeconfig.yml rollout status deployment/github-actions-demo-green
+
+      - name: Switch Traffic to Green
+        run: kubectl --kubeconfig=kubeconfig.yml patch svc github-actions-demo-service -p '{"spec":{"selector":{"version":"green"}}}'
+
+🔹 Step 3: Secure Deployment with IAM Roles
+
+We will create an IAM Role to restrict Kubernetes access.
+📌 3.1 Terraform Configuration
+
+Create terraform/iam.tf:
+
+resource "aws_iam_role" "k8s_role" {
+  name = "KubernetesRole"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+    }]
+  })
+}
+
+resource "aws_iam_policy" "k8s_policy" {
+  name = "KubernetesPolicy"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action   = ["eks:DescribeCluster", "eks:ListClusters"]
+      Effect   = "Allow"
+      Resource = "*"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "k8s_role_attach" {
+  policy_arn = aws_iam_policy.k8s_policy.arn
+  role       = aws_iam_role.k8s_role.name
+}
+
+📌 3.2 Update Terraform in GitHub Actions
+
+Modify .github/workflows/ci-cd.yml:
+
+  setup-iam:
+    runs-on: ubuntu-latest
+    needs: provision-infra
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Initialize Terraform
+        run: terraform init
+        working-directory: terraform
+
+      - name: Apply IAM Role
+        run: terraform apply -auto-approve
+        working-directory: terraform
+
+🚀 Final GitHub Actions Pipeline
+Job	Purpose
+build-and-test	Runs tests for the app
+build-and-push-docker	Builds and pushes Docker image
+provision-infra	Creates Kubernetes cluster using Terraform
+setup-iam	Configures IAM role for Kubernetes
+deploy-blue-green	Implements Blue-Green deployment
+deploy-monitoring	Deploys Prometheus & Grafana for monitoring
+notify-slack	Sends status notifications to Slack
+🔥 Next Steps
+
+    Set up auto-scaling in Kubernetes.
+    Use Istio for traffic routing.
+    Implement RBAC for fine-grained permissions.
