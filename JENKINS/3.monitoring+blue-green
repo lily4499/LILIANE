@@ -1,0 +1,302 @@
+🔍 Adding Monitoring with Prometheus & Grafana + Implementing Blue-Green Deployments in Kubernetes
+
+We’ll integrate Prometheus for monitoring, Grafana for visualization, and implement Blue-Green Deployment to ensure zero downtime deployment for the application.
+✅ Part 1: Monitoring with Prometheus & Grafana
+Step 1: Deploy Prometheus
+
+    Create k8s/prometheus-config.yaml to define Prometheus configuration:
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+    scrape_configs:
+      - job_name: 'kubernetes-nodes'
+        kubernetes_sd_configs:
+          - role: node
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+          - role: pod
+
+Create k8s/prometheus-deployment.yaml:
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+      - name: prometheus
+        image: prom/prometheus
+        args:
+          - "--config.file=/etc/prometheus/prometheus.yml"
+        ports:
+        - containerPort: 9090
+        volumeMounts:
+        - name: config-volume
+          mountPath: /etc/prometheus/
+      volumes:
+      - name: config-volume
+        configMap:
+          name: prometheus-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-service
+spec:
+  selector:
+    app: prometheus
+  ports:
+  - protocol: TCP
+    port: 9090
+    targetPort: 9090
+  type: LoadBalancer
+
+Apply Prometheus Deployment
+
+    kubectl apply -f k8s/prometheus-config.yaml
+    kubectl apply -f k8s/prometheus-deployment.yaml
+
+Step 2: Deploy Grafana
+
+    Create k8s/grafana-deployment.yaml:
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana
+        ports:
+        - containerPort: 3000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-service
+spec:
+  selector:
+    app: grafana
+  ports:
+  - protocol: TCP
+    port: 3000
+    targetPort: 3000
+  type: LoadBalancer
+
+Apply Grafana Deployment
+
+kubectl apply -f k8s/grafana-deployment.yaml
+
+Access Grafana UI
+Open Grafana in your browser:
+
+    http://<EXTERNAL-IP>:3000
+
+    Default Username/Password: admin/admin
+
+    Add Prometheus as a Data Source in Grafana:
+        Open Grafana.
+        Go to Configuration > Data Sources.
+        Click Add Data Source.
+        Select Prometheus.
+        Enter http://prometheus-service:9090 as the Prometheus URL.
+        Click Save & Test.
+
+✅ Part 2: Implementing Blue-Green Deployments
+
+Blue-Green Deployment ensures zero downtime by having two versions of the application running and switching traffic between them.
+Step 1: Define Blue & Green Deployments
+
+Create k8s/backend-blue-green.yaml:
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-blue
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+      version: blue
+  template:
+    metadata:
+      labels:
+        app: backend
+        version: blue
+    spec:
+      containers:
+      - name: backend
+        image: your-dockerhub-username/jenkins-demo-backend:blue-1  # Initial tag
+        ports:
+        - containerPort: 5000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-green
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+      version: green
+  template:
+    metadata:
+      labels:
+        app: backend
+        version: green
+    spec:
+      containers:
+      - name: backend
+        image: your-dockerhub-username/jenkins-demo-backend:green-1  # Initial tag
+        ports:
+        - containerPort: 5000
+
+
+Step 2: Create a Service that Switches Traffic
+
+Modify k8s/backend-service.yaml:
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+spec:
+  selector:
+    app: backend
+    version: blue  # Initially pointing to Blue
+  ports:
+    - protocol: TCP
+      port: 5000
+      targetPort: 5000
+
+Step 3: Update Jenkinsfile for Blue-Green Deployment
+
+Modify the Jenkinsfile to switch traffic between Blue and Green.
+Update Jenkinsfile
+
+pipeline {
+    agent any
+
+    environment {
+        BLUE_VERSION = "blue"
+        GREEN_VERSION = "green"
+        REGISTRY = "your-dockerhub-username"
+        APP_NAME = "jenkins-demo-backend"
+        BUILD_TAG = "${BUILD_NUMBER}"
+    }
+
+    stages {
+        stage('Build Backend') {
+            steps {
+                script {
+                    // Determine the next version (if blue is live, deploy green)
+                    def currentVersion = sh(script: "kubectl get service backend-service -o=jsonpath='{.spec.selector.version}'", returnStdout: true).trim()
+                    def newVersion = currentVersion == BLUE_VERSION ? GREEN_VERSION : BLUE_VERSION
+                    
+                    echo "Current Version: ${currentVersion}, Deploying: ${newVersion}"
+
+                    // Build Docker image with new version tag
+                    sh "docker build -t $REGISTRY/$APP_NAME:$newVersion-$BUILD_TAG ./backend"
+                }
+            }
+        }
+
+        stage('Push to DockerHub') {
+            steps {
+                withDockerRegistry([credentialsId: 'dockerhub-credentials', url: '']) {
+                    sh "docker push $REGISTRY/$APP_NAME:$newVersion-$BUILD_TAG"
+                }
+            }
+        }
+
+        stage('Deploy New Version') {
+            steps {
+                script {
+                    def newVersion = sh(script: "kubectl get service backend-service -o=jsonpath='{.spec.selector.version}'", returnStdout: true).trim() == BLUE_VERSION ? GREEN_VERSION : BLUE_VERSION
+
+                    // Update Kubernetes deployment with the new version
+                    sh "kubectl set image deployment/backend-${newVersion} backend=$REGISTRY/$APP_NAME:$newVersion-$BUILD_TAG"
+
+                    // Switch traffic to the new version
+                    sh "kubectl patch service backend-service -p '{\"spec\":{\"selector\":{\"version\":\"${newVersion}\"}}}'"
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            slackSend (
+                channel: "#devops-ci",
+                color: "good",
+                message: "✅ SUCCESS: Blue-Green Deployment switched to new version!"
+            )
+        }
+        failure {
+            slackSend (
+                channel: "#devops-ci",
+                color: "danger",
+                message: "❌ FAILURE: Deployment failed!"
+            )
+        }
+    }
+}
+
+
+✅ Final Steps
+1. Deploy Everything
+
+kubectl apply -f k8s/backend-blue-green.yaml
+kubectl apply -f k8s/backend-service.yaml
+kubectl apply -f k8s/prometheus-deployment.yaml
+kubectl apply -f k8s/grafana-deployment.yaml
+
+2. Run Jenkins Pipeline
+
+    Build and deploy via Jenkins.
+    Jenkins will switch the active version on success.
+
+🎯 Summary
+
+✅ Added Prometheus & Grafana for monitoring
+✅ Implemented Blue-Green Deployment
+✅ Automated traffic switching via Jenkins pipeline
+
+🚀 Now, you have a fully monitored and zero-downtime deployment setup!
+
+
+✅ Summary
+
+    Each deployment (Blue & Green) gets its own tagged image.
+    Jenkins pipeline automatically builds and pushes the new image.
+    Traffic switches between versions cleanly.
+    Rollback is possible by switching back to the old version.
+
+Now, you have a fully automated Blue-Green Deployment with version control. 🚀
