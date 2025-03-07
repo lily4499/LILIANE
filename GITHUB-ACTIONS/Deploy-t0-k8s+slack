@@ -1,0 +1,198 @@
+Let's extend our GitHub Actions workflow by:
+
+    Deploying to Kubernetes using kubectl
+    Integrating Terraform to provision infrastructure
+    Setting up Slack notifications for CI/CD status
+
+🔹 Step 1: Deploy to Kubernetes using kubectl
+
+We will:
+
+    Use Kubernetes Deployment and Service YAML files.
+    Store KUBECONFIG as a GitHub secret.
+    Apply the manifests using kubectl.
+
+📌 Create k8s/deployment.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: github-actions-demo
+  labels:
+    app: github-actions-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: github-actions-demo
+  template:
+    metadata:
+      labels:
+        app: github-actions-demo
+    spec:
+      containers:
+        - name: app
+          image: your-dockerhub-username/github-actions-demo:latest
+          ports:
+            - containerPort: 3000
+          env:
+            - name: NODE_ENV
+              value: "production"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: github-actions-demo-service
+spec:
+  selector:
+    app: github-actions-demo
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 3000
+  type: LoadBalancer
+
+📌 Step 2: Update GitHub Actions Workflow
+
+Modify .github/workflows/ci-cd.yml to deploy to Kubernetes.
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Run Tests
+        run: npm test
+
+  build-and-push-docker:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Log in to DockerHub
+        run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+      - name: Build Docker Image
+        run: docker build -t your-dockerhub-username/github-actions-demo:latest .
+
+      - name: Push Docker Image
+        run: docker push your-dockerhub-username/github-actions-demo:latest
+
+  deploy-to-k8s:
+    runs-on: ubuntu-latest
+    needs: build-and-push-docker
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Set Kubeconfig
+        run: echo "${{ secrets.KUBECONFIG }}" > kubeconfig.yml
+
+      - name: Deploy to Kubernetes
+        run: kubectl --kubeconfig=kubeconfig.yml apply -f k8s/deployment.yaml
+
+📌 GitHub Secrets
+
+    KUBECONFIG: Add the Kubernetes config file in GitHub Secrets.
+
+🔹 Step 3: Provision Infrastructure Using Terraform
+
+Terraform will:
+
+    Create an EC2 instance for the Kubernetes cluster.
+    Set up security groups and networking.
+
+📌 Create terraform/main.tf
+
+provider "aws" {
+  region = "us-east-1"
+}
+
+resource "aws_instance" "k8s_master" {
+  ami           = "ami-0c55b159cbfafe1f0"
+  instance_type = "t2.medium"
+
+  tags = {
+    Name = "k8s-master"
+  }
+}
+
+📌 Add Terraform to GitHub Actions Workflow
+
+Modify .github/workflows/ci-cd.yml:
+
+  provision-infra:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Initialize Terraform
+        run: terraform init
+        working-directory: terraform
+
+      - name: Apply Terraform
+        run: terraform apply -auto-approve
+        working-directory: terraform
+
+🔹 Step 4: Send Slack Notifications
+
+    Use the Slack Incoming Webhook.
+    Notify on success/failure.
+
+📌 Add Slack Notification to .github/workflows/ci-cd.yml
+
+  notify-slack:
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Send Slack Notification
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_MESSAGE: "GitHub Actions CI/CD Workflow: ${{ job.status }}"
+          SLACK_COLOR: ${{ job.status == 'success' && 'good' || 'danger' }}
+
+📌 GitHub Secrets
+
+    SLACK_WEBHOOK: Store your Slack webhook URL in GitHub Secrets.
+
+🚀 Final Workflow Structure
+Job	Purpose
+build-and-test	Runs tests for the app
+build-and-push-docker	Builds and pushes Docker image
+provision-infra	Creates Kubernetes cluster using Terraform
+deploy-to-k8s	Deploys the app to Kubernetes
+notify-slack	Sends status notifications to Slack
+🎯 Next Steps
+
+    Add monitoring (Prometheus & Grafana).
+    Implement blue-green deployments.
+    Secure deployment using IAM roles.
